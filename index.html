@@ -57,7 +57,311 @@
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jsonwebtoken@9.0.0/dist/index.js"></script>
     <script>
-        // 스크립트 코드 (아래에 별도로 표시)
+        // 전역 변수 설정
+        let isRunning = false;
+        let shouldStop = false;
+        let processedCount = 0;
+        let totalUrls = 0;
+        let serviceAccountKey = null;
+        let indexingQueue = [];
+        let accessToken = null;
+        let tokenExpiry = 0;
+
+        // DOM 요소
+        const startBtn = document.getElementById('start-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const statusDiv = document.getElementById('status');
+        const logDiv = document.getElementById('log');
+        const progressBar = document.getElementById('progress');
+
+        // 로그 함수
+        function log(message, type = 'info') {
+            const now = new Date().toLocaleTimeString();
+            logDiv.innerHTML += `<div class="${type}">[${now}] ${message}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        // WordPress 포스트 가져오기
+        async function fetchWordPressPosts() {
+            const siteUrl = document.getElementById('site-url').value.replace(/\/$/, '');
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('app-password').value;
+            
+            if (!siteUrl || !username || !password) {
+                throw new Error('사이트 URL, 사용자명, 앱 비밀번호를 모두 입력하세요.');
+            }
+            
+            log(`WordPress 포스트 가져오는 중... (${siteUrl})`);
+            
+            const authString = btoa(`${username}:${password}`);
+            
+            try {
+                const response = await axios.get(`${siteUrl}/wp-json/wp/v2/posts?per_page=100&orderby=date&order=desc`, {
+                    headers: {
+                        'Authorization': `Basic ${authString}`
+                    }
+                });
+                
+                const posts = response.data.map(post => ({
+                    url: post.link,
+                    title: post.title.rendered,
+                    date: new Date(post.date)
+                }));
+                
+                log(`${posts.length}개의 포스트를 찾았습니다.`, 'success');
+                return posts;
+            } catch (error) {
+                log(`WordPress 포스트 가져오기 실패: ${error.message}`, 'error');
+                if (error.response) {
+                    log(`응답 코드: ${error.response.status}`, 'error');
+                }
+                throw error;
+            }
+        }
+
+        // Google API 액세스 토큰 획득
+        async function getAccessToken() {
+            if (accessToken && Date.now() < tokenExpiry - 60000) {
+                return accessToken;
+            }
+            
+            try {
+                const serviceAccountText = document.getElementById('service-account').value;
+                if (!serviceAccountText) {
+                    throw new Error('서비스 계정 키가 필요합니다.');
+                }
+                
+                serviceAccountKey = JSON.parse(serviceAccountText);
+                
+                // JWT 토큰 생성
+                const now = Math.floor(Date.now() / 1000);
+                const payload = {
+                    iss: serviceAccountKey.client_email,
+                    scope: 'https://www.googleapis.com/auth/indexing',
+                    aud: 'https://oauth2.googleapis.com/token',
+                    exp: now + 3600,
+                    iat: now
+                };
+                
+                // JWT 라이브러리 사용
+                const jwt = window.jwt.sign(payload, serviceAccountKey.private_key, { algorithm: 'RS256' });
+                
+                // 액세스 토큰 요청
+                const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', {
+                    grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+                    assertion: jwt
+                });
+                
+                accessToken = tokenResponse.data.access_token;
+                tokenExpiry = Date.now() + (tokenResponse.data.expires_in * 1000);
+                
+                log('Google API 인증 완료', 'success');
+                return accessToken;
+            } catch (error) {
+                log(`인증 토큰 획득 실패: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+
+        // URL 색인 상태 확인
+        async function checkIndexStatus(url) {
+            try {
+                const token = await getAccessToken();
+                
+                const response = await axios.post('https://searchconsole.googleapis.com/v1/urlInspection/index:inspect', {
+                    inspectionUrl: url,
+                    siteUrl: document.getElementById('site-url').value.replace(/\/$/, '')
+                }, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const indexStatus = response.data.inspectionResult.indexStatusResult.verdict;
+                log(`${url} - 색인 상태: ${indexStatus}`);
+                
+                return indexStatus === 'PASS';
+            } catch (error) {
+                log(`URL 상태 확인 실패 (${url}): ${error.message}`, 'error');
+                return false; // 상태 확인 실패 시 색인되지 않은 것으로 간주
+            }
+        }
+
+        // URL 색인 요청
+        async function requestIndexing(url) {
+            try {
+                const token = await getAccessToken();
+                
+                const response = await axios.post('https://indexing.googleapis.com/v3/urlNotifications:publish', {
+                    url: url,
+                    type: 'URL_UPDATED'
+                }, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                log(`색인 요청 성공: ${url}`, 'success');
+                return true;
+            } catch (error) {
+                log(`색인 요청 실패 (${url}): ${error.message}`, 'error');
+                return false;
+            }
+        }
+
+        // 색인 프로세스 실행
+        async function runIndexingProcess() {
+            if (isRunning) return;
+            
+            try {
+                isRunning = true;
+                shouldStop = false;
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                
+                log('색인 프로세스 시작...');
+                statusDiv.textContent = '상태: 포스트 가져오는 중...';
+                
+                // 1. WordPress 포스트 가져오기
+                const allPosts = await fetchWordPressPosts();
+                
+                if (allPosts.length === 0) {
+                    log('처리할 포스트가 없습니다.', 'error');
+                    return;
+                }
+                
+                // 2. 최대 100개로 제한
+                const postsToProcess = allPosts.slice(0, 100);
+                totalUrls = postsToProcess.length;
+                
+                // 3. 색인 상태 확인 및 필터링
+                statusDiv.textContent = '상태: 색인 상태 확인 중...';
+                log('포스트 색인 상태 확인 중...');
+                
+                for (let i = 0; i < postsToProcess.length; i++) {
+                    if (shouldStop) {
+                        log('프로세스가 사용자에 의해 중지되었습니다.', 'pending');
+                        break;
+                    }
+                    
+                    const post = postsToProcess[i];
+                    const isIndexed = await checkIndexStatus(post.url);
+                    
+                    if (!isIndexed) {
+                        indexingQueue.push(post.url);
+                        log(`색인 대기열에 추가: ${post.url}`);
+                    } else {
+                        log(`이미 색인됨: ${post.url}`, 'success');
+                    }
+                    
+                    // 진행 상황 업데이트
+                    processedCount = i + 1;
+                    updateProgress();
+                    
+                    // UI 멈춤 방지를 위한 짧은 대기
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
+                
+                log(`총 ${indexingQueue.length}개의 URL 색인이 필요합니다.`);
+                
+                // 색인할 URL이 없으면 종료
+                if (indexingQueue.length === 0) {
+                    log('모든 URL이 이미 색인되어 있습니다.', 'success');
+                    statusDiv.textContent = '상태: 완료 (모든 URL 색인됨)';
+                    return;
+                }
+                
+                // 4. 색인 요청 (15개 단위로 처리)
+                let indexedCount = 0;
+                
+                for (let i = 0; i < indexingQueue.length; i += 15) {
+                    if (shouldStop) {
+                        log('프로세스가 사용자에 의해 중지되었습니다.', 'pending');
+                        break;
+                    }
+                    
+                    const batch = indexingQueue.slice(i, i + 15);
+                    log(`배치 ${Math.floor(i/15) + 1}: ${batch.length}개 URL 색인 요청 중...`);
+                    statusDiv.textContent = `상태: 배치 ${Math.floor(i/15) + 1} 처리 중 (${batch.length}개 URL)`;
+                    
+                    for (const url of batch) {
+                        if (shouldStop) break;
+                        
+                        const success = await requestIndexing(url);
+                        if (success) indexedCount++;
+                        
+                        // 진행 상황 업데이트
+                        updateProgress(indexedCount, indexingQueue.length);
+                        
+                        // API 제한 고려한 딜레이
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                    }
+                    
+                    // 15개 처리 후 1시간 대기
+                    if (i + 15 < indexingQueue.length) {
+                        const waitTimeMinutes = 60;
+                        log(`다음 배치를 위해 ${waitTimeMinutes}분 대기 중... (취소하려면 '중지' 버튼 클릭)`, 'pending');
+                        statusDiv.textContent = `상태: 대기 중 (${waitTimeMinutes}분)`;
+                        
+                        // 1시간 대기 (60분)
+                        for (let minute = 0; minute < waitTimeMinutes; minute++) {
+                            if (shouldStop) break;
+                            log(`대기 중: ${minute + 1}/${waitTimeMinutes}분`);
+                            statusDiv.textContent = `상태: 대기 중 (${minute + 1}/${waitTimeMinutes}분)`;
+                            
+                            await new Promise(resolve => setTimeout(resolve, 60 * 1000)); // 1분
+                        }
+                    }
+                }
+                
+                log(`색인 프로세스 완료: ${indexedCount}/${indexingQueue.length}개 URL 처리됨`, 'success');
+                statusDiv.textContent = `상태: 완료 (${indexedCount}/${indexingQueue.length}개 URL 처리됨)`;
+                
+            } catch (error) {
+                log(`색인 프로세스 중 오류 발생: ${error.message}`, 'error');
+                statusDiv.textContent = '상태: 오류 발생';
+            } finally {
+                isRunning = false;
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+        }
+
+        // 진행 상황 업데이트
+        function updateProgress(current = processedCount, total = totalUrls) {
+            const percentage = total > 0 ? Math.round((current / total) * 100) : 0;
+            progressBar.style.width = `${percentage}%`;
+        }
+
+        // 이벤트 리스너
+        startBtn.addEventListener('click', runIndexingProcess);
+        stopBtn.addEventListener('click', () => {
+            shouldStop = true;
+            log('프로세스 중지 요청됨. 현재 작업이 완료된 후 중지됩니다...', 'pending');
+            statusDiv.textContent = '상태: 중지 중...';
+        });
+
+        // 브라우저 저장소에서 이전 설정 로드
+        window.addEventListener('DOMContentLoaded', () => {
+            const siteUrl = localStorage.getItem('site-url');
+            const username = localStorage.getItem('username');
+            
+            if (siteUrl) document.getElementById('site-url').value = siteUrl;
+            if (username) document.getElementById('username').value = username;
+            
+            log('준비 완료. \'색인 시작\' 버튼을 클릭하세요.');
+        });
+
+        // 설정 저장
+        document.getElementById('site-url').addEventListener('change', (e) => {
+            localStorage.setItem('site-url', e.target.value);
+        });
+
+        document.getElementById('username').addEventListener('change', (e) => {
+            localStorage.setItem('username', e.target.value);
+        });
     </script>
 </body>
 </html>
