@@ -55,7 +55,6 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
-    // <script src="https://cdn.jsdelivr.net/npm/jsonwebtoken@9.0.0/dist/index.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jsrsasign@10.5.27/lib/jsrsasign-all-min.js"></script>
     <script>
         // 전역 변수 설정
@@ -121,7 +120,6 @@
         }
 
         // Google API 액세스 토큰 획득
-        // getAccessToken 함수 내부 수정
         async function getAccessToken() {
             if (accessToken && Date.now() < tokenExpiry - 60000) {
                 return accessToken;
@@ -133,7 +131,6 @@
                     throw new Error('서비스 계정 키가 필요합니다.');
                 }
                 
-                // 서비스 계정 키 파싱
                 serviceAccountKey = JSON.parse(serviceAccountText);
                 
                 // 현재 시간
@@ -183,7 +180,13 @@
             try {
                 const token = await getAccessToken();
                 
-                const response = await axios.post('https://searchconsole.googleapis.com/v1/urlInspection/index:inspect', {
+                // CORS 프록시 서비스 활용
+                const corsProxyUrl = 'https://corsproxy.io/?';
+                const apiUrl = 'https://searchconsole.googleapis.com/v1/urlInspection/index:inspect';
+                
+                log(`URL 상태 확인 중: ${url}`);
+                
+                const response = await axios.post(corsProxyUrl + encodeURIComponent(apiUrl), {
                     inspectionUrl: url,
                     siteUrl: document.getElementById('site-url').value.replace(/\/$/, '')
                 }, {
@@ -194,12 +197,16 @@
                 });
                 
                 const indexStatus = response.data.inspectionResult.indexStatusResult.verdict;
-                log(`${url} - 색인 상태: ${indexStatus}`);
+                log(`${url} - 색인 상태: ${indexStatus}`, indexStatus === 'PASS' ? 'success' : 'pending');
                 
                 return indexStatus === 'PASS';
             } catch (error) {
                 log(`URL 상태 확인 실패 (${url}): ${error.message}`, 'error');
-                return false; // 상태 확인 실패 시 색인되지 않은 것으로 간주
+                if (error.response) {
+                    log(`응답 코드: ${error.response.status}`, 'error');
+                }
+                // 상태 확인 실패 시에도 색인 대상에 포함
+                return false;
             }
         }
 
@@ -208,7 +215,11 @@
             try {
                 const token = await getAccessToken();
                 
-                const response = await axios.post('https://indexing.googleapis.com/v3/urlNotifications:publish', {
+                // CORS 프록시 사용
+                const corsProxyUrl = 'https://corsproxy.io/?';
+                const apiUrl = 'https://indexing.googleapis.com/v3/urlNotifications:publish';
+                
+                const response = await axios.post(corsProxyUrl + encodeURIComponent(apiUrl), {
                     url: url,
                     type: 'URL_UPDATED'
                 }, {
@@ -254,6 +265,8 @@
                 // 3. 색인 상태 확인 및 필터링
                 statusDiv.textContent = '상태: 색인 상태 확인 중...';
                 log('포스트 색인 상태 확인 중...');
+                
+                indexingQueue = []; // 큐 초기화
                 
                 for (let i = 0; i < postsToProcess.length; i++) {
                     if (shouldStop) {
