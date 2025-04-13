@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>블로그 색인 도구</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; padding: 16px; }
+        .container { max-width: 600px; margin: 0 auto; }
+        button, input { font-size: 16px; padding: 8px 16px; margin: 8px 0; }
+        button { background: #0066cc; color: white; border: none; border-radius: 8px; }
+        #status, #log { border: 1px solid #ddd; padding: 12px; margin: 8px 0; border-radius: 8px; }
+        #log { height: 300px; overflow-y: scroll; font-size: 14px; }
+        .success { color: green; }
+        .error { color: red; }
+        .pending { color: orange; }
+        .progress-bar { height: 20px; background: #eee; border-radius: 10px; margin: 10px 0; }
+        .progress-fill { height: 100%; background: #0066cc; border-radius: 10px; width: 0%; transition: width 0.3s; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WordPress 블로그 색인 도구</h1>
+        
+        <div>
+            <label for="site-url">WordPress 사이트 URL:</label>
+            <input type="url" id="site-url" placeholder="https://yourblog.com" style="width: 100%;">
+        </div>
+        
+        <div>
+            <label for="username">사용자명:</label>
+            <input type="text" id="username" placeholder="WordPress 사용자명">
+        </div>
+        
+        <div>
+            <label for="app-password">앱 비밀번호:</label>
+            <input type="password" id="app-password" placeholder="앱 비밀번호">
+        </div>
+        
+        <div>
+            <label for="service-account">서비스 계정 키 (JSON):</label>
+            <textarea id="service-account" rows="4" style="width: 100%;" placeholder="Google 서비스 계정 키 JSON 내용을 붙여넣으세요"></textarea>
+        </div>
+        
+        <button id="start-btn">색인 시작</button>
+        <button id="stop-btn" disabled>중지</button>
+        
+        <div id="status">상태: 대기 중</div>
+        
+        <div class="progress-bar">
+            <div class="progress-fill" id="progress"></div>
+        </div>
+        
+        <div id="log">로그가 여기에 표시됩니다...</div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsonwebtoken@9.0.0/dist/index.js"></script>
+    <script>
+        // 스크립트 코드 (아래에 별도로 표시)
+    </script>
+</body>
+</html>
