@@ -55,7 +55,8 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jsonwebtoken@9.0.0/dist/index.js"></script>
+    // <script src="https://cdn.jsdelivr.net/npm/jsonwebtoken@9.0.0/dist/index.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsrsasign@10.5.27/lib/jsrsasign-all-min.js"></script>
     <script>
         // 전역 변수 설정
         let isRunning = false;
@@ -135,6 +136,7 @@
                 
                 // JWT 토큰 생성
                 const now = Math.floor(Date.now() / 1000);
+                const header = {alg: "RS256", typ: "JWT"};
                 const payload = {
                     iss: serviceAccountKey.client_email,
                     scope: 'https://www.googleapis.com/auth/indexing',
@@ -143,8 +145,13 @@
                     iat: now
                 };
                 
-                // JWT 라이브러리 사용
-                const jwt = window.jwt.sign(payload, serviceAccountKey.private_key, { algorithm: 'RS256' });
+                // jsrsasign 라이브러리 사용
+                const jwt = KJUR.jws.JWS.sign(
+                    "RS256", 
+                    JSON.stringify(header), 
+                    JSON.stringify(payload), 
+                    serviceAccountKey.private_key
+                );
                 
                 // 액세스 토큰 요청
                 const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', {
