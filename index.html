@@ -121,6 +121,7 @@
         }
 
         // Google API 액세스 토큰 획득
+        // getAccessToken 함수 내부 수정
         async function getAccessToken() {
             if (accessToken && Date.now() < tokenExpiry - 60000) {
                 return accessToken;
@@ -132,10 +133,13 @@
                     throw new Error('서비스 계정 키가 필요합니다.');
                 }
                 
+                // 서비스 계정 키 파싱
                 serviceAccountKey = JSON.parse(serviceAccountText);
                 
-                // JWT 토큰 생성
+                // 현재 시간
                 const now = Math.floor(Date.now() / 1000);
+                
+                // JWT 헤더 및 페이로드 설정
                 const header = {alg: "RS256", typ: "JWT"};
                 const payload = {
                     iss: serviceAccountKey.client_email,
@@ -145,7 +149,7 @@
                     iat: now
                 };
                 
-                // jsrsasign 라이브러리 사용
+                // jsrsasign 라이브러리를 사용하여 JWT 생성
                 const jwt = KJUR.jws.JWS.sign(
                     "RS256", 
                     JSON.stringify(header), 
@@ -154,10 +158,14 @@
                 );
                 
                 // 액세스 토큰 요청
-                const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', {
-                    grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-                    assertion: jwt
-                });
+                const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', 
+                    `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`,
+                    {
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded'
+                        }
+                    }
+                );
                 
                 accessToken = tokenResponse.data.access_token;
                 tokenExpiry = Date.now() + (tokenResponse.data.expires_in * 1000);
